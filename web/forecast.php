@@ -1,5 +1,4 @@
 <?php
-
 //Фунция преобразования одного диапазона в другой
 function map($value, $fromLow, $fromHigh, $toLow, $toHigh) {
     $fromRange = $fromHigh - $fromLow;
@@ -9,24 +8,21 @@ function map($value, $fromLow, $fromHigh, $toLow, $toHigh) {
     $tmpValue *= $scaleFactor;
     return $tmpValue + $toLow;
 }
-
 // Выборка данных из MySQL
 $query_weather = "SELECT * FROM $sql_tabl";
 $result_weather = $sql_connect->query($query_weather);
 $pressure_array = array();
 $time_array = array();
-
+//Запись массивов из данных MySQL
 while($weather_row = mysqli_fetch_array($result_weather)) {
 	$pressure_array[] = $weather_row['pressure'];
 	$time_array[] = $weather_row['id'];
 }
-
-// Обнуляем показания для формулы
+// Переменные для формулы
 $sumX = 0;
 $sumY = 0;
 $sumX2 = 0;
 $sumXY = 0;
-
 for ($i = 0; $i < 10; $i++) {	// Расчет переменных для формулы
 	$sumX += $time_array[$i];
 	$sumY += $pressure_array[$i];
@@ -40,5 +36,5 @@ $factor = $factor - $sumX * $sumY;
 $factor = $factor / (10 * $sumX2 - $sumX * $sumX);
 $dpressure = $factor * 10;  // Расчёт изменения давления
 $dpressure = round($dpressure); // Округление показания до двух знаков после запятой
-$mapdelta = map($dpressure, -250, 250, 100, -100); // Преобразование диапазона
+$mapdelta = map($dpressure, -250, 250, 100, -100); // Преобразование диапазона (Если минус то вероятность дождя выше)
 ?>
