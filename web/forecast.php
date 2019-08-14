@@ -13,11 +13,13 @@ $query_weather = "SELECT * FROM $sql_tabl";
 $result_weather = $sql_connect->query($query_weather);
 $pressure_array = array();
 $time_array = array();
+
 //Запись массивов из данных MySQL
 while($weather_row = mysqli_fetch_array($result_weather)) {
 	$pressure_array[] = $weather_row['pressure'];
 	$time_array[] = $weather_row['id'];
 }
+
 // Переменные для формулы
 $sumX = 0;
 $sumY = 0;
@@ -29,7 +31,8 @@ for ($i = 0; $i < 10; $i++) {	// Расчет переменных для фор
 	$sumX2 += $time_array[$i] * $time_array[$i];
 	$sumXY += $time_array[$i] * $pressure_array[$i];
 }
-/// Расчет формулы
+
+// Расчет формулы
 $factor = 0;
 $factor = 10 * $sumXY; // Расчёт коэффициента наклона приямой
 $factor = $factor - $sumX * $sumY;
