@@ -2,89 +2,92 @@
 #include <ESP8266HTTPClient.h>
 #include <Wire.h>
 #include <TimeLib.h>
+#include <iarduino_OLED.h>  
 
 // Подключение экрана
-#include <LiquidCrystal_I2C.h>
-LiquidCrystal_I2C lcd(0x27,16,2);  // set the LCD address to 0x27 for a 16 chars and 2 line display
 
 // Подключение датчиков
 #include <Adafruit_Sensor.h> 
 #include <Adafruit_BME280.h>
 
 // Показания с датчиков
-float temperature, humidity, pressure, altitude;              //Переменные ввиде чисел
+float temperature, humidity, pressure, altitude;               //Переменные ввиде чисел
 String postData, sTemperature, sHumidity,sPressure,sAltitude;  // Перевод для отправки POST-Запроса
 
 int server_time,send_Data = 0;
 int tHour,tMinute,tSecond,tTimer;
+extern uint8_t MediumFontRus[];
 
 // Переменные для подключения к Wi-Fi
-const char *ssid = "*****";                  // Точка доступа Wi-Fi
-const char *password = "****";            // Пароль к Wi-Fi
-const char *host = "****";              // Хост для подключения
+const char *ssid = "";                  // Точка доступа Wi-Fi
+const char *password = "";            // Пароль к Wi-Fi
+const char *webhost = "";              // Хост для подключения
+const char *sslhost = "";              // Хост для подключения
 
 // Переменные для работы с таймерами
 unsigned long timer1 = 0;                     // Текущее время
 
 String mac_address = WiFi.macAddress();
 
-String token = "ButterFly140";                  // Секретный токен
-#define SEALEVELPRESSURE_HPA (1013.25)          // Давление на уровне моря
+String token = "";                  // Проверочный токен
+#define SEALEVELPRESSURE_HPA (1013.25)          // Ваще не ебу
 Adafruit_BME280 bme;                            // Включение датчика как переменную
+iarduino_OLED myOLED(0x3C);
 
 void setup() {
+    delay(1000);
     Serial.begin(115200);               // Инициализация серийного порта
-
-    bme.begin(0x76);                    // Включение датчика BME280 (адрес датчика 0x76)
-    lcd.init();                         // Включение дисплея
-    lcd.backlight();
-    
+    myOLED.setFont(MediumFontRus);
+    myOLED.begin();
+    bme.begin(0x76);                    // Включение датчика BME280
+    myOLED.setCoding(TXT_UTF8);
     WiFi.mode(WIFI_OFF);                // Отключение от прошлых соединений
     delay(1000);                        // Ждем секунду
-    WiFi.mode(WIFI_STA);                // ESP8266 в режиме станции
+    WiFi.mode(WIFI_STA);                // ESP8266 в режим клиента
    
     WiFi.begin(ssid, password);         // Подключение к Wi-Fi
-    // Логи
-    Serial.print("Connecting");
-    lcd.print("Connecting");
+    Serial.print("Connecting");         // Процедура подключения
+   
     while (WiFi.status() != WL_CONNECTED) {
-        lcd.print(".");
+        Serial.print("/");
         delay(500);
+       // lcd.clear();
     }
-    
-    getTimeFromServer();                  // Получение времени в unix-формате с сервера
-    tTimer = minute()+1;                  // Текущая минута +1 (необходимо для таймера)
-    // Логирование подключения в Serial
+
+    getTimeToServer();
+    tTimer = minute()+1;
+    Serial.println(server_time);
+
     Serial.print("Подключено к : ");
     Serial.println(ssid);
     Serial.print("Адрес: ");
     Serial.println(WiFi.localIP());    
-    lcd.clear();
 }
 
 void loop() {
-    tHour = hour();     // Час в переменную
-    tMinute = minute(); // Минута в переменную
-    tSecond = second(); // Секунда в переменную
+    tHour = hour();
+    tMinute = minute();
+    tSecond = second();
     SData(); // Отправка данных на сервер каждую шестую минуту
 
-    // Обновление времени на дисплее каждую минуту
     if(tMinute == tTimer){
+     
       tTimer++;
       if(tMinute == 59) tTimer = 0;
       char lcd_time_i[10];
       snprintf(lcd_time_i, sizeof(lcd_time_i), "%02d:%02d",hour(),minute());
-      lcd.setCursor(0,0);
-      Serial.println("Прошла минута");
-      lcd.print(lcd_time_i);
+      Serial.println(lcd_time_i);
+      myOLED.print(lcd_time_i,0, 16);
+      myOLED.print(sTemperature,0, 32);
+      myOLED.print(sHumidity,0, 48);
+      myOLED.print(sPressure,0, 64);
     }
 }
 
-// Отправка показаний с датчика на сервер
 void SData(){
-  if(tMinute % 6 == 0){                 // Каждую 6 (шестую) минуту
+  if(tMinute % 6 == 0){
     if(tSecond != 0) send_Data = 0;
-    if(tSecond == 0 && send_Data == 0){ 
+    if(tSecond == 0 && send_Data == 0){
       send_Data = 1;
   
       // Получение данных с датчика
@@ -104,7 +107,7 @@ void SData(){
       // Строчка отправки POST-запроса
       postData = "secretkey=" + token + "&mac_address=" + mac_address + "&temperature=" + sTemperature + "&humidity=" + sHumidity + "&pressure=" + sPressure;
       // Адрес для отправки POST-запрос
-      http.begin("/query.php");
+      http.begin(webhost+"/weather/query.php");
       http.addHeader("Content-Type", "application/x-www-form-urlencoded");
       // Отправка запроса на сервер
       int httpCode = http.POST(postData);
@@ -120,9 +123,9 @@ void SData(){
   }
 }
 
-void getTimeFromServer(){
+void getTimeToServer(){
     HTTPClient http_start;
-    http_start.begin("/query.php");
+    http_start.begin(webhost+"/weather/query.php");
     http_start.addHeader("Content-Type", "application/x-www-form-urlencoded");
     int httpCode_start = http_start.POST("secretkey=QueryTime");
     String payload_start = http_start.getString();
