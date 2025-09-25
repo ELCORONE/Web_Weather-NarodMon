@@ -9,7 +9,7 @@
 #define SSID "WI-FI SSID"
 #define PASSWORD "WI-FI PASSWORD"
 #define HOST "example.com"
-#define TOKEN "ButterFly140"
+#define TOKEN "" // Секретный ключ такой же в query.php
 #define SSL_FINGERPRINT "" // Отпечаток SSL сертификата
 #define SERVER_URL "https://example.com/query.php"
 #define NTP_SERVER "ntp0.ntp-servers.net"
