@@ -1,40 +1,82 @@
 <?php
-
-// Запрос всех записей таблицы
-$query_full = "SELECT * FROM $sql_tabl";
-$result_full = $sql_connect->query($query_full);
-
-//Переменные ввиде массива
-$temps = array();
-$hemis = array();
-$times = array();
-
-//Получение всех значений таблицы
-while($row = mysqli_fetch_array($result_full)) {
-	$temps[] = $row['temp'];
-	$hemis[] = $row['hemi'];
-	$pressures[] = $row['pressure'];
-	$times[] = $row['time'];
-	}
-// Обновление данных и запись в таблицу
-for ($i = 1; $i <= 10; $i++)
-	{
-	if($i == 10) {	// Если последний номер - записывать текущие значения в таблицу
-		$temps[$i] = $temperature;
-		$hemis[$i] = $humidity;
-		$pressures[$i] = $pressure;
-		$times[$i] = $time;
-	}
-	else {			// Текущий = следующий
-		$temps[$i] = next($temps);
-		$hemis[$i] = next($hemis);
-		$pressures[$i] = next($pressures);
-		$times[$i] = next($times);
-	}
-	
-	// Запись данных в таблицу
-	$query_temp = "UPDATE $sql_tabl SET temp=$temps[$i],hemi=$hemis[$i],pressure=$pressures[$i],time='$times[$i]' WHERE id=$i";
-	$result_temp = $sql_connect->query($query_temp);
-	if (!$result_temp) die('updating error'. mysql_error()); // Сообщение об ошибке
+try {
+    // Запрос всех записей таблицы с подготовленным запросом
+    $query_full = "SELECT * FROM $sql_weather ORDER BY id";
+    $stmt_full = $pdo->query($query_full);
+    $rows = $stmt_full->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Инициализация массивов
+    $data = [
+        'ids' => [], 'temps' => [], 'hemis' => [], 
+        'pressures' => [], 'times' => [], 'deltas' => []
+    ];
+    
+    // Заполнение массивов
+    foreach ($rows as $row) {
+        $data['ids'][] = $row['id'];
+        $data['temps'][] = $row['temp'];
+        $data['hemis'][] = $row['hemi'];
+        $data['pressures'][] = $row['pressure'];
+        $data['times'][] = $row['time'];
+        $data['deltas'][] = $row['delta'];
+    }
+    
+    // Расчет предсказания и обновление данных
+    for ($i = 0; $i < 10; $i++) {
+        if($i == 9) {
+            // Записываем текущие значения
+            $data['temps'][$i] = $temperature;
+            $data['hemis'][$i] = $humidity;
+            $data['pressures'][$i] = $pressure;
+            $data['times'][$i] = $time;
+            
+            // Расчет предсказания погоды
+            $sumX = $sumY = $sumX2 = $sumXY = 0;
+            
+            for ($ix = 0; $ix < 10; $ix++) {
+                $sumX += $data['ids'][$ix];
+                $sumY += $data['pressures'][$ix];
+                $sumX2 += $data['ids'][$ix] * $data['ids'][$ix];
+                $sumXY += $data['ids'][$ix] * $data['pressures'][$ix];
+            }
+            
+            // Расчет коэффициента наклона
+            $numerator = 10 * $sumXY - $sumX * $sumY;
+            $denominator = 10 * $sumX2 - $sumX * $sumX;
+            
+            if($denominator != 0) {
+                $factor = $numerator / $denominator;
+                $dpressure = $factor * 10;
+                $data['deltas'][$i] = round($dpressure, 2);
+            } else {
+                $data['deltas'][$i] = 0;
+            }
+        } else {
+            // Сдвигаем значения
+            $data['temps'][$i] = $data['temps'][$i + 1];
+            $data['hemis'][$i] = $data['hemis'][$i + 1];
+            $data['pressures'][$i] = $data['pressures'][$i + 1];
+            $data['times'][$i] = $data['times'][$i + 1];
+            $data['deltas'][$i] = $data['deltas'][$i + 1];
+        }
+        
+        // Запись данных с подготовленным запросом
+        $update_hour = "UPDATE $sql_weather SET temp = :temp, hemi = :hemi, 
+                       pressure = :pressure, time = :time, delta = :delta 
+                       WHERE id = :id";
+        
+        $stmt = $pdo->prepare($update_hour);
+        $stmt->execute([
+            ':temp' => $data['temps'][$i],
+            ':hemi' => $data['hemis'][$i],
+            ':pressure' => $data['pressures'][$i],
+            ':time' => $data['times'][$i],
+            ':delta' => $data['deltas'][$i],
+            ':id' => $i
+        ]);
+    }
+    
+} catch(PDOException $e) {
+    error_log("Onehour error: " . $e->getMessage());
 }
 ?>
