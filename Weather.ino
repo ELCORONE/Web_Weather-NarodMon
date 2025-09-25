@@ -1,134 +1,159 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
-#include <Wire.h>
-#include <TimeLib.h>
-#include <iarduino_OLED.h>  
+#include <WiFiUdp.h>
+#include <NTPClient.h>
+#include <GyverBME280.h>
+#include <GyverHTU21D.h>
 
-// Подключение экрана
+// DEFINE константы вместо переменных
+#define SSID "WI-FI SSID"
+#define PASSWORD "WI-FI PASSWORD"
+#define HOST "example.com"
+#define TOKEN "ButterFly140"
+#define SSL_FINGERPRINT "" // Отпечаток SSL сертификата
+#define SERVER_URL "https://example.com/query.php"
+#define NTP_SERVER "ntp0.ntp-servers.net"
 
-// Подключение датчиков
-#include <Adafruit_Sensor.h> 
-#include <Adafruit_BME280.h>
+// Настройка получения времени
+#define TIME_OFFSET 35999
+#define UPDATE_INTERVAL 3600000
 
-// Показания с датчиков
-float temperature, humidity, pressure, altitude;               //Переменные ввиде чисел
-String postData, sTemperature, sHumidity,sPressure,sAltitude;  // Перевод для отправки POST-Запроса
+// Настройка для датчика влажности
+#define HEATING_DURATION 10000UL	// Время нагрева датчика влажности
+#define HUMIDITY_THRESHOLD 85.0		// Мин.влажность для посчета очков высокой влажности
+#define HIGH_HUMIDITY_LIMIT 180		// Количество очков необходимое для начала прогрева
 
-int server_time,send_Data = 0;
-int tHour,tMinute,tSecond,tTimer;
-extern uint8_t MediumFontRus[];
+// Переменные датчиков
+float Temp, Humidity, Pressure;
+int HighHumidity = 0;
+bool heatingActive = false;
+unsigned long heatingStartTime = 0;
 
-// Переменные для подключения к Wi-Fi
-const char *ssid = "";                  // Точка доступа Wi-Fi
-const char *password = "";            // Пароль к Wi-Fi
-const char *webhost = "";              // Хост для подключения
-const char *sslhost = "";              // Хост для подключения
+// Переменные для отправки
+String postData, sTemp, sHumidity, sPressure;
+byte send_Data = 0;  // Используем byte вместо int
 
-// Переменные для работы с таймерами
-unsigned long timer1 = 0;                     // Текущее время
+// Переменные времени
+byte tHour, tMinute, tSecond;  // byte достаточно для значений 0-59
 
-String mac_address = WiFi.macAddress();
+// Объекты
+WiFiUDP ntpUDP;
+GyverHTU21D htu;
+GyverBME280 bme;
+NTPClient timeClient(ntpUDP, NTP_SERVER, TIME_OFFSET, UPDATE_INTERVAL);
 
-String token = "";                  // Проверочный токен
-#define SEALEVELPRESSURE_HPA (1013.25)          // Ваще не ебу
-Adafruit_BME280 bme;                            // Включение датчика как переменную
-iarduino_OLED myOLED(0x3C);
-
+// Первоначальный запуск WeatherStation
 void setup() {
-    delay(1000);
-    Serial.begin(115200);               // Инициализация серийного порта
-    myOLED.setFont(MediumFontRus);
-    myOLED.begin();
-    bme.begin(0x76);                    // Включение датчика BME280
-    myOLED.setCoding(TXT_UTF8);
-    WiFi.mode(WIFI_OFF);                // Отключение от прошлых соединений
-    delay(1000);                        // Ждем секунду
-    WiFi.mode(WIFI_STA);                // ESP8266 в режим клиента
-   
-    WiFi.begin(ssid, password);         // Подключение к Wi-Fi
-    Serial.print("Connecting");         // Процедура подключения
-   
-    while (WiFi.status() != WL_CONNECTED) {
-        Serial.print("/");
-        delay(500);
-       // lcd.clear();
-    }
-
-    getTimeToServer();
-    tTimer = minute()+1;
-    Serial.println(server_time);
-
-    Serial.print("Подключено к : ");
-    Serial.println(ssid);
-    Serial.print("Адрес: ");
-    Serial.println(WiFi.localIP());    
+	delay(2000);
+	Serial.begin(115200);
+	
+	WiFi.mode(WIFI_OFF);
+	delay(1000);
+	WiFi.mode(WIFI_STA);
+	WiFi.begin(SSID, PASSWORD);
+	
+	Serial.print("WI-FI: ");
+	Serial.println(SSID);
+	
+	while (WiFi.status() != WL_CONNECTED) {
+		Serial.print("-");
+		delay(50);
+	}
+	
+	timeClient.begin();
+	bme.begin();
+	
+	if (!htu.begin()) {
+		Serial.println(F("HTU21D error"));
+	}
+	
+	Serial.print("Подключено к: ");
+	Serial.println(SSID);
+	Serial.print("Адрес: ");
+	Serial.println(WiFi.localIP());
 }
 
+// Основной цикл программы
 void loop() {
-    tHour = hour();
-    tMinute = minute();
-    tSecond = second();
-    SData(); // Отправка данных на сервер каждую шестую минуту
-
-    if(tMinute == tTimer){
-     
-      tTimer++;
-      if(tMinute == 59) tTimer = 0;
-      char lcd_time_i[10];
-      snprintf(lcd_time_i, sizeof(lcd_time_i), "%02d:%02d",hour(),minute());
-      Serial.println(lcd_time_i);
-      myOLED.print(lcd_time_i,0, 16);
-      myOLED.print(sTemperature,0, 32);
-      myOLED.print(sHumidity,0, 48);
-      myOLED.print(sPressure,0, 64);
-    }
+	set_Time();
+	SendData();
+	checkHumidity();
 }
 
-void SData(){
-  if(tMinute % 6 == 0){
-    if(tSecond != 0) send_Data = 0;
-    if(tSecond == 0 && send_Data == 0){
-      send_Data = 1;
-  
-      // Получение данных с датчика
-      temperature = bme.readTemperature();
-      humidity = bme.readHumidity();
-      pressure = bme.readPressure();
-      //altitude = bme.readAltitude(SEALEVELPRESSURE_HPA);
-
-      //Создания HTTP-клиента
-      HTTPClient http;
-      
-      // Перевод показаний с датчика в строку
-      sTemperature = String(temperature);
-      sHumidity = String(humidity);
-      sPressure = String(pressure);
-      
-      // Строчка отправки POST-запроса
-      postData = "secretkey=" + token + "&mac_address=" + mac_address + "&temperature=" + sTemperature + "&humidity=" + sHumidity + "&pressure=" + sPressure;
-      // Адрес для отправки POST-запрос
-      http.begin(webhost+"/weather/query.php");
-      http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-      // Отправка запроса на сервер
-      int httpCode = http.POST(postData);
-      // Получение ответа с сервера
-      String payload = http.getString();
-
-      Serial.println("Данные с датчиков отправлены: ответы->");
-      Serial.println(httpCode);   // Логи в серийный порт
-      Serial.println(payload);    // Логи в серийный порт
-      http.end();                   // Закрытие соединения
-     }
-    delay(50);
-  }
+// Установка времени
+void set_Time() {
+	timeClient.update();
+	tHour = timeClient.getHours();
+	tMinute = timeClient.getMinutes();
+	tSecond = timeClient.getSeconds();
 }
 
-void getTimeToServer(){
-    HTTPClient http_start;
-    http_start.begin(webhost+"/weather/query.php");
-    http_start.addHeader("Content-Type", "application/x-www-form-urlencoded");
-    int httpCode_start = http_start.POST("secretkey=QueryTime");
-    String payload_start = http_start.getString();
-    server_time = payload_start.toInt();
-    setTime(server_time);
+// Проверка: была ли высокой температура в течении 3х часов
+void checkHumidity() {
+	if (heatingActive) {
+		if (millis() - heatingStartTime >= HEATING_DURATION) {
+			htu.setHeater(false);
+			heatingActive = false;
+			HighHumidity = 0;
+			Serial.println("Нагрев выключен, счетчик сброшен");
+		}
+		return;
+	}
+		
+	if (Humidity > HUMIDITY_THRESHOLD) {
+		HighHumidity++;
+		Serial.print("Высокая влажность! Счетчик: ");
+		Serial.println(HighHumidity);
+		
+		if (HighHumidity >= HIGH_HUMIDITY_LIMIT) {
+			htu.setHeater(true);
+			heatingActive = true;
+			heatingStartTime = millis();
+			Serial.println("Включен нагрев на 10 секунд");
+		}
+	}
+}
+
+void SendData() {
+	if (tMinute % 6 == 0) {
+		if (tSecond != 0) {
+			send_Data = 0;
+		}
+		
+		if (tSecond == 0 && send_Data == 0) {
+			send_Data = 1;
+			
+			// Получение данных с датчиков
+			Temp = htu.getTemperatureWait();
+			Humidity = htu.getHumidityWait();
+			Pressure = bme.readPressure();
+			
+			// Оптимизированное формирование строк
+			sTemp = String(Temp);      // 1 знак после запятой
+			sHumidity = String(Humidity);
+			sPressure = String(Pressure); // Без дробной части для давления
+			
+			// Оптимизированное формирование POST-данных
+			postData = "secretkey=" + String(TOKEN) + 
+					  "&temperature=" + sTemp + 
+					  "&humidity=" + sHumidity + 
+					  "&pressure=" + sPressure;
+			
+			HTTPClient http;
+			http.begin(SERVER_URL);
+			http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+			
+			int httpCode = http.POST(postData);
+			String payload = http.getString();
+			
+			Serial.println("Данные отправлены. Ответ:");
+			Serial.print("Код: ");
+			Serial.println(httpCode);
+			Serial.print("Данные: ");
+			Serial.println(payload);
+			
+			http.end();
+		}
+		delay(13);
+	}
 }
