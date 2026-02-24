@@ -75,7 +75,8 @@ try {
             ':id' => $i
         ]);
     }
-    
+    $weather_trend = analyzeWeatherTrend($data, $temperature, $humidity, $pressure);
+	if ($weather_trend['priority'] > 0) SendMessage(920121066, $weather_trend['message']);
 } catch(PDOException $e) {
     error_log("Onehour error: " . $e->getMessage());
 }
